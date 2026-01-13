@@ -1,0 +1,28 @@
+# FastAPI関連
+fastapi
+uvicorn[standard]
+python-multipart
+
+# 認証・セキュリティ
+PyJWT
+bcrypt
+
+# Google Cloud関連
+google-cloud-firestore
+google-generativeai
+
+# 音声処理
+pydub
+# Python 3.13の場合、audioopの代替として必要
+# git+https://github.com/AbstractUmbra/pyaudioop.git
+
+# ドキュメント生成
+python-docx
+reportlab
+
+# ユーティリティ
+python-dotenv
+
+# テスト（オプション）
+# pytest
+# httpx

@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>議事録自動生成システム - ダッシュボード</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        .drop-zone {
+            border: 3px dashed #cbd5e0;
+            transition: all 0.3s;
+        }
+        .drop-zone.dragover {
+            border-color: #4f46e5;
+            background-color: #eef2ff;
+        }
+        .progress-bar {
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <!-- ヘッダー -->
+    <header class="bg-white shadow-sm border-b">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+            <div class="flex items-center space-x-3">
+                <i class="fas fa-file-audio text-3xl text-indigo-600"></i>
+                <h1 class="text-2xl font-bold text-gray-800">議事録自動生成システム</h1>
+            </div>
+            <div class="flex items-center space-x-4">
+                <span class="text-gray-600">
+                    <i class="fas fa-user-circle mr-2"></i>
+                    <span id="currentUser"></span>
+                </span>
+                <button onclick="logout()" class="text-red-600 hover:text-red-700 font-semibold">
+                    <i class="fas fa-sign-out-alt mr-2"></i>ログアウト
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <!-- ステップインジケーター -->
+        <div class="mb-8">
+            <div class="flex items-center justify-between">
+                <div class="flex-1">
+                    <div class="flex items-center">
+                        <div id="step1" class="flex items-center text-indigo-600">
+                            <div class="rounded-full h-12 w-12 flex items-center justify-center border-2 border-indigo-600 bg-indigo-600 text-white font-bold">1</div>
+                            <div class="ml-4 font-semibold">メタデータ入力</div>
+                        </div>
+                        <div class="flex-1 h-1 bg-gray-300 mx-4"></div>
+                    </div>
+                </div>
+                <div class="flex-1">
+                    <div class="flex items-center">
+                        <div id="step2" class="flex items-center text-gray-400">
+                            <div class="rounded-full h-12 w-12 flex items-center justify-center border-2 border-gray-300 font-bold">2</div>
+                            <div class="ml-4 font-semibold">音声アップロード</div>
+                        </div>
+                        <div class="flex-1 h-1 bg-gray-300 mx-4"></div>
+                    </div>
+                </div>
+                <div class="flex-1">
+                    <div class="flex items-center">
+                        <div id="step3" class="flex items-center text-gray-400">
+                            <div class="rounded-full h-12 w-12 flex items-center justify-center border-2 border-gray-300 font-bold">3</div>
+                            <div class="ml-4 font-semibold">編集・確認</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ステップ1: メタデータ入力 -->
+        <div id="metadataSection" class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <h2 class="text-xl font-bold text-gray-800 mb-6">
+                <i class="fas fa-info-circle mr-2 text-indigo-600"></i>会議情報の入力
+            </h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">作成日</label>
+                    <input type="date" id="createdDate" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" required>
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">作成者</label>
+                    <input type="text" id="creator" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" placeholder="山田太郎" required>
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">お客様名</label>
+                    <input type="text" id="customerName" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" placeholder="株式会社A" required>
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">打合せ場所</label>
+                    <input type="text" id="meetingPlace" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" placeholder="会議室1" required>
+                </div>
+            </div>
+            
+            <!-- 動的タイトル表示 -->
+            <div class="mt-6 p-4 bg-indigo-50 border border-indigo-200 rounded-lg">
+                <p class="text-sm text-gray-600 mb-1">自動生成されるタイトル:</p>
+                <p id="dynamicTitle" class="text-lg font-semibold text-indigo-800"></p>
+            </div>
+
+            <button onclick="goToStep2()" class="mt-6 bg-indigo-600 text-white px-6 py-3 rounded-lg hover:bg-indigo-700 transition font-semibold">
+                次へ <i class="fas fa-arrow-right ml-2"></i>
+            </button>
+        </div>
+
+        <!-- ステップ2: 音声アップロード -->
+        <div id="uploadSection" class="bg-white rounded-lg shadow-md p-6 mb-6 hidden">
+            <h2 class="text-xl font-bold text-gray-800 mb-6">
+                <i class="fas fa-cloud-upload-alt mr-2 text-indigo-600"></i>音声ファイルのアップロード
+            </h2>
+            
+            <!-- ドラッグ&ドロップエリア -->
+            <div id="dropZone" class="drop-zone rounded-lg p-12 text-center cursor-pointer">
+                <i class="fas fa-file-audio text-6xl text-gray-400 mb-4"></i>
+                <p class="text-lg font-semibold text-gray-700 mb-2">音声ファイルをドラッグ＆ドロップ</p>
+                <p class="text-gray-500 mb-4">または</p>
+                <button type="button" class="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 transition">
+                    ファイルを選択
+                </button>
+                <input type="file" id="audioFile" accept="audio/*,video/*" class="hidden">
+                <p class="text-sm text-gray-400 mt-4">対応形式: MP3, WAV, M4A, MP4など（最大500MB）</p>
+            </div>
+
+            <!-- 選択されたファイル情報 -->
+            <div id="fileInfo" class="hidden mt-6 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-3">
+                        <i class="fas fa-file-audio text-2xl text-indigo-600"></i>
+                        <div>
+                            <p id="fileName" class="font-semibold text-gray-800"></p>
+                            <p id="fileSize" class="text-sm text-gray-600"></p>
+                        </div>
+                    </div>
+                    <button onclick="clearFile()" class="text-red-600 hover:text-red-700">
+                        <i class="fas fa-times-circle text-2xl"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- アップロード進捗 -->
+            <div id="uploadProgress" class="hidden mt-6">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-sm font-semibold text-gray-700">処理中...</span>
+                    <span id="progressPercent" class="text-sm font-semibold text-indigo-600">0%</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-3">
+                    <div id="progressBar" class="progress-bar bg-indigo-600 h-3 rounded-full" style="width: 0%"></div>
+                </div>
+                <p id="progressMessage" class="text-sm text-gray-600 mt-2"></p>
+            </div>
+
+            <div class="mt-6 flex space-x-4">
+                <button onclick="goToStep1()" class="bg-gray-300 text-gray-700 px-6 py-3 rounded-lg hover:bg-gray-400 transition font-semibold">
+                    <i class="fas fa-arrow-left mr-2"></i>戻る
+                </button>
+                <button id="uploadBtn" onclick="uploadAudio()" disabled class="bg-indigo-600 text-white px-6 py-3 rounded-lg hover:bg-indigo-700 transition font-semibold disabled:bg-gray-400 disabled:cursor-not-allowed">
+                    アップロードして解析 <i class="fas fa-arrow-right ml-2"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- ステップ3: 編集・確認 -->
+        <div id="editSection" class="hidden">
+            <!-- 議事録要約 -->
+            <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+                <h2 class="text-xl font-bold text-gray-800 mb-4">
+                    <i class="fas fa-edit mr-2 text-indigo-600"></i>議事録の編集
+                </h2>
+                <textarea id="summaryText" rows="15" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 font-mono text-sm"></textarea>
+            </div>
+
+            <!-- 確認事項 -->
+            <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+                <h2 class="text-xl font-bold text-gray-800 mb-4">
+                    <i class="fas fa-lightbulb mr-2 text-yellow-500"></i>確認事項（議事録に追加する項目を選択）
+                </h2>
+                <div id="confirmationItems" class="space-y-3"></div>
+            </div>
+
+            <!-- エクスポート -->
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-xl font-bold text-gray-800 mb-4">
+                    <i class="fas fa-download mr-2 text-indigo-600"></i>エクスポート
+                </h2>
+                <div class="flex space-x-4">
+                    <button onclick="exportDocument('word')" class="flex-1 bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition font-semibold">
+                        <i class="fas fa-file-word mr-2"></i>Word形式でダウンロード
+                    </button>
+                    <button onclick="exportDocument('pdf')" class="flex-1 bg-red-600 text-white px-6 py-3 rounded-lg hover:bg-red-700 transition font-semibold">
+                        <i class="fas fa-file-pdf mr-2"></i>PDF形式でダウンロード
+                    </button>
+                </div>
+                <button onclick="resetForm()" class="w-full mt-4 bg-gray-300 text-gray-700 px-6 py-3 rounded-lg hover:bg-gray-400 transition font-semibold">
+                    <i class="fas fa-redo mr-2"></i>新規作成
+                </button>
+            </div>
+        </div>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>
