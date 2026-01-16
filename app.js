@@ -137,25 +137,27 @@ function handleFile(file) {
         return;
     }
 
-    // ファイルサイズチェック（32MB - Cloud Run制限）
-    const maxSize = 30 * 1024 * 1024; // 30MBに制限（安全マージン）
+    // ファイルサイズチェック（最大500MB）
+    const maxSize = 500 * 1024 * 1024; // 500MB
     if (file.size > maxSize) {
-        alert(
-            `ファイルサイズが大きすぎます (${formatFileSize(file.size)})。\n\n` +
-            `Cloud Runの制限により、30MB以下のファイルのみアップロード可能です。\n\n` +
-            `解決方法:\n` +
-            `1. 音声ファイルを圧縮してください（MP3形式、64kbps推奨）\n` +
-            `2. ファイルを分割してそれぞれアップロードしてください\n` +
-            `3. より低いビットレートで録音してください`
-        );
+        alert(`ファイルサイズが大きすぎます (${formatFileSize(file.size)})。500MB以下のファイルを選択してください。`);
         return;
     }
 
     selectedFile = file;
 
     // ファイル情報表示
+    const fileSizeText = formatFileSize(file.size);
+    const cloudRunLimit = 30 * 1024 * 1024;
+
     document.getElementById('fileName').textContent = file.name;
-    document.getElementById('fileSize').textContent = formatFileSize(file.size);
+    document.getElementById('fileSize').textContent = fileSizeText;
+
+    // 30MB超の場合は自動分割の案内を表示
+    if (file.size > cloudRunLimit) {
+        document.getElementById('fileSize').textContent = `${fileSizeText} (自動的に10分ごとに分割してアップロードします)`;
+    }
+
     document.getElementById('fileInfo').classList.remove('hidden');
     document.getElementById('uploadBtn').disabled = false;
 }
@@ -175,7 +177,7 @@ function formatFileSize(bytes) {
     return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
 }
 
-// 音声アップロードと解析（直接アップロード）
+// 音声アップロードと解析（自動分割対応）
 async function uploadAudio() {
     if (!selectedFile) {
         alert('ファイルを選択してください');
@@ -185,62 +187,47 @@ async function uploadAudio() {
     const token = localStorage.getItem('access_token');
     const uploadBtn = document.getElementById('uploadBtn');
     const progressSection = document.getElementById('uploadProgress');
+    const cloudRunLimit = 30 * 1024 * 1024; // 30MB
 
     try {
         uploadBtn.disabled = true;
         progressSection.classList.remove('hidden');
-        updateProgress(10, '音声ファイルをアップロード中...');
 
-        // FormDataの作成
-        const formData = new FormData();
-        formData.append('file', selectedFile);
-        formData.append('created_date', metadata.created_date);
-        formData.append('creator', metadata.creator);
-        formData.append('customer_name', metadata.customer_name);
-        formData.append('meeting_place', metadata.meeting_place);
-
-        updateProgress(30, '音声ファイルを処理中...');
-
-        // APIリクエスト
-        const response = await fetch(`${API_BASE_URL}/api/upload`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${token}`
-            },
-            body: formData
-        });
-
-        if (!response.ok) {
-            // エラーレスポンスの内容を確認
-            const contentType = response.headers.get('content-type');
-            let errorMessage = 'アップロードに失敗しました';
-
-            if (contentType && contentType.includes('application/json')) {
-                try {
-                    const error = await response.json();
-                    errorMessage = error.detail || errorMessage;
-                } catch (e) {
-                    console.error('JSONパースエラー:', e);
-                }
-            } else {
-                // HTMLエラーページが返ってきた場合
-                const text = await response.text();
-                console.error('サーバーエラー:', text);
-                errorMessage = `サーバーエラー (ステータス: ${response.status})`;
-            }
-
-            throw new Error(errorMessage);
+        // 30MB以下の場合は通常アップロード
+        if (selectedFile.size <= cloudRunLimit) {
+            return await uploadSingleFile(selectedFile, token);
         }
 
-        updateProgress(70, 'AIで解析中...');
+        // 30MB以上の場合は10分ごとに分割してアップロード
+        updateProgress(5, 'ファイルを分割中...');
+        const segments = await splitAudioFile(selectedFile);
 
-        const result = await response.json();
+        if (!segments || segments.length === 0) {
+            throw new Error('ファイルの分割に失敗しました');
+        }
+
+        updateProgress(10, `${segments.length}個のセグメントをアップロード中...`);
+
+        // 各セグメントをアップロードして解析
+        const allResults = [];
+        for (let i = 0; i < segments.length; i++) {
+            const progress = 10 + ((i + 1) / segments.length) * 60;
+            updateProgress(progress, `セグメント ${i + 1}/${segments.length} を処理中...`);
+
+            const result = await uploadSingleFile(segments[i], token);
+            allResults.push(result);
+        }
+
+        updateProgress(75, '全セグメントの結果を統合中...');
+
+        // 結果を統合
+        const finalResult = await mergeResults(allResults);
 
         updateProgress(100, '完了！');
 
         // 結果を表示
         setTimeout(() => {
-            displayResults(result);
+            displayResults(finalResult);
         }, 500);
 
     } catch (error) {
@@ -249,6 +236,174 @@ async function uploadAudio() {
         uploadBtn.disabled = false;
         progressSection.classList.add('hidden');
     }
+}
+
+// 単一ファイルのアップロード
+async function uploadSingleFile(file, token) {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('created_date', metadata.created_date);
+    formData.append('creator', metadata.creator);
+    formData.append('customer_name', metadata.customer_name);
+    formData.append('meeting_place', metadata.meeting_place);
+
+    const response = await fetch(`${API_BASE_URL}/api/upload`, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${token}`
+        },
+        body: formData
+    });
+
+    if (!response.ok) {
+        const contentType = response.headers.get('content-type');
+        let errorMessage = 'アップロードに失敗しました';
+
+        if (contentType && contentType.includes('application/json')) {
+            try {
+                const error = await response.json();
+                errorMessage = error.detail || errorMessage;
+            } catch (e) {
+                console.error('JSONパースエラー:', e);
+            }
+        } else {
+            const text = await response.text();
+            console.error('サーバーエラー:', text);
+            errorMessage = `サーバーエラー (ステータス: ${response.status})`;
+        }
+
+        throw new Error(errorMessage);
+    }
+
+    return await response.json();
+}
+
+// 音声ファイルを10分ごとに分割
+async function splitAudioFile(file) {
+    try {
+        const arrayBuffer = await file.arrayBuffer();
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+        const duration = audioBuffer.duration; // 秒
+        const segmentDuration = 10 * 60; // 10分 = 600秒
+        const numSegments = Math.ceil(duration / segmentDuration);
+
+        console.log(`音声ファイル: ${duration}秒, ${numSegments}セグメントに分割`);
+
+        const segments = [];
+        const sampleRate = audioBuffer.sampleRate;
+
+        for (let i = 0; i < numSegments; i++) {
+            const startTime = i * segmentDuration;
+            const endTime = Math.min((i + 1) * segmentDuration, duration);
+            const startSample = Math.floor(startTime * sampleRate);
+            const endSample = Math.floor(endTime * sampleRate);
+            const segmentLength = endSample - startSample;
+
+            // 新しいAudioBufferを作成
+            const segmentBuffer = audioContext.createBuffer(
+                audioBuffer.numberOfChannels,
+                segmentLength,
+                sampleRate
+            );
+
+            // データをコピー
+            for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
+                const sourceData = audioBuffer.getChannelData(channel);
+                const segmentData = segmentBuffer.getChannelData(channel);
+                for (let j = 0; j < segmentLength; j++) {
+                    segmentData[j] = sourceData[startSample + j];
+                }
+            }
+
+            // WAVファイルに変換
+            const wavBlob = await audioBufferToWav(segmentBuffer);
+            const segmentFile = new File([wavBlob], `segment_${i + 1}.wav`, { type: 'audio/wav' });
+            segments.push(segmentFile);
+        }
+
+        return segments;
+    } catch (error) {
+        console.error('ファイル分割エラー:', error);
+        throw new Error('ファイルの分割に失敗しました。ブラウザがWeb Audio APIをサポートしていない可能性があります。');
+    }
+}
+
+// AudioBufferをWAVファイルに変換
+async function audioBufferToWav(audioBuffer) {
+    const numChannels = audioBuffer.numberOfChannels;
+    const sampleRate = audioBuffer.sampleRate;
+    const format = 1; // PCM
+    const bitDepth = 16;
+
+    const bytesPerSample = bitDepth / 8;
+    const blockAlign = numChannels * bytesPerSample;
+
+    const data = [];
+    for (let i = 0; i < audioBuffer.length; i++) {
+        for (let channel = 0; channel < numChannels; channel++) {
+            const sample = audioBuffer.getChannelData(channel)[i];
+            const int16 = Math.max(-1, Math.min(1, sample)) * 0x7FFF;
+            data.push(int16);
+        }
+    }
+
+    const dataLength = data.length * bytesPerSample;
+    const buffer = new ArrayBuffer(44 + dataLength);
+    const view = new DataView(buffer);
+
+    // WAVヘッダーを書き込む
+    const writeString = (offset, string) => {
+        for (let i = 0; i < string.length; i++) {
+            view.setUint8(offset + i, string.charCodeAt(i));
+        }
+    };
+
+    writeString(0, 'RIFF');
+    view.setUint32(4, 36 + dataLength, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true); // fmt chunk size
+    view.setUint16(20, format, true);
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * blockAlign, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, bitDepth, true);
+    writeString(36, 'data');
+    view.setUint32(40, dataLength, true);
+
+    // PCMデータを書き込む
+    let offset = 44;
+    for (let i = 0; i < data.length; i++) {
+        view.setInt16(offset, data[i], true);
+        offset += 2;
+    }
+
+    return new Blob([buffer], { type: 'audio/wav' });
+}
+
+// 複数セグメントの解析結果を統合
+async function mergeResults(results) {
+    // 全てのサマリーと確認事項を結合
+    const allSummaries = results.map(r => r.summary).join('\n\n---\n\n');
+    const allConfirmations = [];
+
+    results.forEach(r => {
+        if (r.confirmation_items && r.confirmation_items.length > 0) {
+            allConfirmations.push(...r.confirmation_items);
+        }
+    });
+
+    // 重複する確認事項を除去
+    const uniqueConfirmations = [...new Set(allConfirmations)];
+
+    return {
+        summary: allSummaries,
+        confirmation_items: uniqueConfirmations,
+        dynamic_title: results[0].dynamic_title
+    };
 }
 
 function updateProgress(percent, message) {
