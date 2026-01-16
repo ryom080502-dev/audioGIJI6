@@ -92,8 +92,8 @@ class AudioProcessor:
             if not PYDUB_AVAILABLE:
                 # 100MB以上のファイルでffmpegが利用可能な場合
                 if file_size > self.MAX_FILE_SIZE_BYTES and FFMPEG_AVAILABLE:
-                    logger.info("ffmpegを使用してファイルを分割します")
-                    return self._split_audio_with_ffmpeg(file_path)
+                    logger.info("ffmpegを使用してファイルを圧縮・分割します")
+                    return self._split_audio_with_ffmpeg(file_path, size_based=True)
 
                 # ffmpegも使えない場合
                 if file_size > self.MAX_FILE_SIZE_BYTES:
@@ -141,7 +141,21 @@ class AudioProcessor:
                 logger.info("音声ファイルを圧縮します")
                 audio = self._compress_audio(audio)
 
-            # 分割処理
+                # 圧縮後のサイズを確認するため一時出力
+                temp_compressed = tempfile.mktemp(suffix=".mp3")
+                audio.export(temp_compressed, format="mp3", bitrate=self.TARGET_BITRATE)
+                compressed_size = os.path.getsize(temp_compressed)
+                logger.info(f"圧縮後サイズ: {compressed_size / (1024 * 1024):.2f} MB")
+
+                # 圧縮後も100MBを超える場合は強制的に分割
+                if compressed_size > self.MAX_FILE_SIZE_BYTES:
+                    logger.warning(f"圧縮後も {compressed_size / (1024 * 1024):.2f} MB で100MBを超えています。ファイルサイズベースで分割します")
+                    os.unlink(temp_compressed)  # 一時ファイルを削除
+                    return self._split_audio_by_size(audio)
+
+                os.unlink(temp_compressed)  # 一時ファイルを削除
+
+            # 分割処理（時間ベース）
             if needs_split:
                 logger.info(f"音声ファイルを1時間ごとに分割します")
                 return self._split_audio(audio)
@@ -220,13 +234,77 @@ class AudioProcessor:
                 f"セグメント {i+1}/{num_segments} 作成 "
                 f"({start_hours:.2f}時間 - {end_hours:.2f}時間, {segment_size / (1024 * 1024):.2f} MB)"
             )
-            
+
             segment_paths.append(output_path)
             self.temp_files.append(output_path)
-        
+
         return segment_paths
 
-    def _split_audio_with_ffmpeg(self, file_path: str) -> List[str]:
+    def _split_audio_by_size(self, audio: AudioSegment) -> List[str]:
+        """
+        音声ファイルをサイズベースで分割（圧縮しても100MB以下にならない場合）
+
+        Args:
+            audio: 分割する音声データ
+
+        Returns:
+            分割された音声ファイルのパスのリスト
+        """
+        total_duration = len(audio)
+        segment_paths = []
+
+        # 推定: 1ミリ秒あたり約80バイト（64kbps, 16kHz, mono）
+        # 安全マージンを考慮して90MBをターゲットに
+        TARGET_SIZE_BYTES = 90 * 1024 * 1024
+        estimated_bytes_per_ms = 80
+        segment_duration_ms = int(TARGET_SIZE_BYTES / estimated_bytes_per_ms)
+
+        # セグメント数を計算
+        num_segments = (total_duration // segment_duration_ms) + 1
+        total_hours = total_duration / (1000 * 60 * 60)
+        segment_hours = segment_duration_ms / (1000 * 60 * 60)
+
+        logger.info(
+            f"音声を {num_segments} 個のセグメント（約{segment_hours:.2f}時間ごと、90MB目標）に分割 - "
+            f"合計長さ: {total_hours:.2f}時間"
+        )
+
+        for i in range(num_segments):
+            start_ms = i * segment_duration_ms
+            end_ms = min((i + 1) * segment_duration_ms, total_duration)
+
+            # セグメントを抽出
+            segment = audio[start_ms:end_ms]
+
+            # 一時ファイルに保存
+            output_path = tempfile.mktemp(suffix=f"_segment_{i+1}.mp3")
+            segment.export(
+                output_path,
+                format="mp3",
+                bitrate=self.TARGET_BITRATE
+            )
+
+            segment_size = os.path.getsize(output_path)
+            start_hours = start_ms / (1000 * 60 * 60)
+            end_hours = end_ms / (1000 * 60 * 60)
+
+            # もし分割後も100MBを超える場合は警告
+            if segment_size > self.MAX_FILE_SIZE_BYTES:
+                logger.warning(
+                    f"警告: セグメント {i+1} が {segment_size / (1024 * 1024):.2f} MB で100MBを超えています"
+                )
+
+            logger.info(
+                f"セグメント {i+1}/{num_segments} 作成 "
+                f"({start_hours:.2f}時間 - {end_hours:.2f}時間, {segment_size / (1024 * 1024):.2f} MB)"
+            )
+
+            segment_paths.append(output_path)
+            self.temp_files.append(output_path)
+
+        return segment_paths
+
+    def _split_audio_with_ffmpeg(self, file_path: str, size_based: bool = False) -> List[str]:
         """
         ffmpegを使用して音声ファイルを1時間ごとに分割
 
@@ -270,11 +348,21 @@ class AudioProcessor:
 
             logger.info(f"音声の長さ: {total_duration:.2f}秒 ({total_hours:.2f}時間)")
 
-            # 1時間 = 3600秒
-            segment_duration = 3600
+            # サイズベースまたは時間ベースで分割
+            if size_based:
+                # 推定: 64kbps = 8KB/秒、90MBをターゲット
+                TARGET_SIZE_BYTES = 90 * 1024 * 1024
+                estimated_bytes_per_sec = 8 * 1024
+                segment_duration = int(TARGET_SIZE_BYTES / estimated_bytes_per_sec)
+                logger.info(f"サイズベース分割: 各セグメント約{segment_duration/3600:.2f}時間（90MB目標）")
+            else:
+                # 1時間 = 3600秒
+                segment_duration = 3600
+                logger.info("時間ベース分割: 各セグメント1時間")
+
             num_segments = int(total_duration // segment_duration) + 1
 
-            logger.info(f"音声を {num_segments} 個のセグメント（1時間ごと）に分割")
+            logger.info(f"音声を {num_segments} 個のセグメントに分割")
 
             for i in range(num_segments):
                 start_time = i * segment_duration
