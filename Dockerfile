@@ -18,7 +18,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # アプリケーションファイルをコピー
 COPY main.py .
 COPY gemini_service.py .
-COPY gcs_service.py .
 COPY audio_processor.py .
 COPY document_generator.py .
 COPY auth_service.py .
