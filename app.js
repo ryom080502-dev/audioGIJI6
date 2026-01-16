@@ -137,10 +137,17 @@ function handleFile(file) {
         return;
     }
 
-    // ファイルサイズチェック（500MB）
-    const maxSize = 500 * 1024 * 1024;
+    // ファイルサイズチェック（32MB - Cloud Run制限）
+    const maxSize = 30 * 1024 * 1024; // 30MBに制限（安全マージン）
     if (file.size > maxSize) {
-        alert('ファイルサイズは500MB以下にしてください');
+        alert(
+            `ファイルサイズが大きすぎます (${formatFileSize(file.size)})。\n\n` +
+            `Cloud Runの制限により、30MB以下のファイルのみアップロード可能です。\n\n` +
+            `解決方法:\n` +
+            `1. 音声ファイルを圧縮してください（MP3形式、64kbps推奨）\n` +
+            `2. ファイルを分割してそれぞれアップロードしてください\n` +
+            `3. より低いビットレートで録音してください`
+        );
         return;
     }
 
