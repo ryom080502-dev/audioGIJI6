@@ -23,6 +23,7 @@ reportlab
 
 # ユーティリティ
 python-dotenv
+requests
 
 # テスト（オプション）
 # pytest

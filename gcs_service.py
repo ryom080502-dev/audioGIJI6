@@ -3,8 +3,10 @@ Google Cloud Storage サービス
 署名付きURLを生成してクライアントから直接アップロードできるようにする
 """
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta
 from google.cloud import storage
+from google.auth import compute_engine
+from google.auth.transport import requests as google_requests
 import logging
 
 logger = logging.getLogger(__name__)
@@ -25,7 +27,9 @@ class GCSService:
 
     def generate_upload_signed_url(self, filename: str, content_type: str = "audio/*") -> str:
         """
-        アップロード用の署名付きURLを生成
+        アップロード用の署名付きURLを生成（Cloud Run環境対応）
+
+        IAM signBlob APIを使用して署名付きURLを生成
 
         Args:
             filename: アップロードするファイル名
@@ -35,14 +39,38 @@ class GCSService:
             署名付きURL
         """
         try:
+            from google.auth import default
+            from google.auth.transport.requests import AuthorizedSession
+            import google.auth
+
             blob = self.bucket.blob(filename)
 
-            # 署名付きURLを生成（15分間有効）
+            # デフォルトの認証情報を取得
+            credentials, project = default()
+
+            # メタデータサーバーからサービスアカウントのメールアドレスを取得
+            try:
+                # Cloud Run環境
+                import requests as http_requests
+                metadata_server = "http://metadata.google.internal/computeMetadata/v1/"
+                metadata_flavor = {'Metadata-Flavor': 'Google'}
+                service_account_email = http_requests.get(
+                    metadata_server + 'instance/service-accounts/default/email',
+                    headers=metadata_flavor
+                ).text
+                logger.info(f"サービスアカウント: {service_account_email}")
+            except Exception:
+                # フォールバック
+                service_account_email = "643484544688-compute@developer.gserviceaccount.com"
+                logger.warning(f"メタデータサーバーからの取得失敗、デフォルトを使用: {service_account_email}")
+
+            # 署名付きURLを生成（IAM signBlobを使用）
             url = blob.generate_signed_url(
                 version="v4",
                 expiration=timedelta(minutes=15),
                 method="PUT",
                 content_type=content_type,
+                service_account_email=service_account_email,
             )
 
             logger.info(f"署名付きURL生成成功: {filename}")
