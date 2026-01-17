@@ -27,19 +27,28 @@ class DocumentGenerator:
         self.japanese_font_available = False
         try:
             # システムの日本語フォントを試行
-            font_paths = [
-                "C:\\Windows\\Fonts\\msgothic.ttc",  # MS ゴシック (Windows)
-                "C:\\Windows\\Fonts\\msmincho.ttc",  # MS 明朝 (Windows)
-                "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",  # ヒラギノ (macOS)
-                "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",  # Linux
+            # (フォントパス, TTCインデックス) のタプル
+            font_configs = [
+                ("C:\\Windows\\Fonts\\msgothic.ttc", 0),  # MS ゴシック (Windows)
+                ("C:\\Windows\\Fonts\\msmincho.ttc", 0),  # MS 明朝 (Windows)
+                ("C:\\Windows\\Fonts\\meiryo.ttc", 0),  # メイリオ (Windows)
+                ("C:\\Windows\\Fonts\\yugothic.ttf", None),  # 游ゴシック (Windows)
+                ("/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc", 0),  # ヒラギノ (macOS)
+                ("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", None),  # Linux
             ]
 
-            for font_path in font_paths:
+            for font_path, ttc_index in font_configs:
                 if os.path.exists(font_path):
                     try:
-                        pdfmetrics.registerFont(TTFont('Japanese', font_path))
+                        # TTCファイルの場合はsubfontIndexを指定
+                        if ttc_index is not None and font_path.endswith('.ttc'):
+                            pdfmetrics.registerFont(TTFont('Japanese', font_path, subfontIndex=ttc_index))
+                        else:
+                            pdfmetrics.registerFont(TTFont('Japanese', font_path))
+
                         self.japanese_font_available = True
-                        logger.info(f"日本語フォント登録成功: {font_path}")
+                        logger.info(f"日本語フォント登録成功: {font_path}" +
+                                  (f" (index: {ttc_index})" if ttc_index is not None else ""))
                         break
                     except Exception as e:
                         logger.debug(f"フォント登録失敗: {font_path} - {str(e)}")
